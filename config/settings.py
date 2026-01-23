@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     # Local apps
     'users',
     'students',
+    'reports',
 ]
 
 MIDDLEWARE = [
@@ -216,8 +217,8 @@ SIMPLE_JWT = {
 
 SMS_PROVIDER = config('SMS_PROVIDER', default='log')
 
-BLESSED_TEXTS_API_KEY = config('BLESSED_TEXTS_API_KEY', default='')
-BLESSED_TEXTS_SENDER_ID = config('BLESSED_TEXTS_SENDER_ID', default='BuretiCDF')
+BLESSED_TEXTS_API_KEY = config('BLESSED_TEXTS_API_KEY', default='856b9e8c9f8f43dfbefad40d17fe554d')
+BLESSED_TEXTS_SENDER_ID = config('BLESSED_TEXTS_SENDER_ID', default='XpressKard')
 
 
 # =====================================================

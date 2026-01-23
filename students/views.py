@@ -38,6 +38,46 @@ class StudentViewSet(viewsets.ModelViewSet):
             return self.queryset.filter(status=status_param)
         return self.queryset
     
+    def _generate_sms_message(self, student, custom_message=None):
+        """
+        Generate SMS message based on sponsorship source
+        """
+        if custom_message:
+            return custom_message
+        
+        # Get the total allocation (CDF + sponsorship)
+        total_allocation = student.total_allocation
+        
+        # Generate message based on sponsorship source
+        if student.sponsorship_source == 'cdf':
+            message = f"Dear {student.name}, you have been awarded KES {student.amount:,.2f} CDF bursary for your studies at {student.institution}. Congratulations! - Chepalungu CDF"
+        
+        elif student.sponsorship_source == 'mp':
+            sponsor_name = student.sponsor_name if student.sponsor_name else "your MP"
+            
+            if student.amount > 0 and student.sponsorship_amount and student.sponsorship_amount > 0:
+                message = f"Dear {student.name}, you have been awarded KES {student.amount:,.2f} from CDF and KES {student.sponsorship_amount:,.2f} from {sponsor_name} for your studies at {student.institution}. Total: KES {total_allocation:,.2f}. Congratulations! - Chepalungu CDF"
+            elif student.sponsorship_amount and student.sponsorship_amount > 0:
+                message = f"Dear {student.name}, you have been awarded KES {student.sponsorship_amount:,.2f} from {sponsor_name} for your studies at {student.institution}. Congratulations! - Chepalungu CDF"
+            else:
+                message = f"Dear {student.name}, you have been awarded KES {student.amount:,.2f} CDF bursary for your studies at {student.institution}. Congratulations! - Chepalungu CDF"
+        
+        elif student.sponsorship_source == 'other':
+            sponsor_name = student.sponsor_name if student.sponsor_name else "your sponsor"
+            
+            if student.amount > 0 and student.sponsorship_amount and student.sponsorship_amount > 0:
+                message = f"Dear {student.name}, you have been awarded KES {student.amount:,.2f} from CDF and KES {student.sponsorship_amount:,.2f} from {sponsor_name} for your studies at {student.institution}. Total: KES {total_allocation:,.2f}. Congratulations! - Chepalungu CDF"
+            elif student.sponsorship_amount and student.sponsorship_amount > 0:
+                message = f"Dear {student.name}, you have been awarded KES {student.sponsorship_amount:,.2f} from {sponsor_name} for your studies at {student.institution}. Congratulations! - Chepalungu CDF"
+            else:
+                message = f"Dear {student.name}, you have been awarded KES {student.amount:,.2f} CDF bursary for your studies at {student.institution}. Congratulations! - Chepalungu CDF"
+        
+        else:
+            # Default fallback
+            message = f"Dear {student.name}, you have been awarded KES {student.amount:,.2f} bursary for your studies at {student.institution}. Congratulations! - Chepalungu CDF"
+        
+        return message
+    
     @action(detail=True, methods=['put'])
     def approve(self, request, pk=None):
         """
@@ -97,6 +137,13 @@ class StudentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Check if student is approved
+        if student.status != 'approved' and student.status != 'disbursed':
+            return Response(
+                {'error': 'Student must be approved to send SMS'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         # Determine which phone numbers to send to
         phones_to_send = []
         
@@ -117,12 +164,9 @@ class StudentViewSet(viewsets.ModelViewSet):
                 if phone_type not in existing_type:
                     unique_phones[phone_number] = f"{existing_type}/{phone_type}"
         
-        # Create the message
+        # Create the message based on sponsorship source
         custom_message = request.data.get('message')
-        if custom_message:
-            message = custom_message
-        else:
-            message = f"Dear {student.name}, you have been awarded {student.amount:,.2f} KES CDF bursary for your studies at {student.institution}. Congratulations! - Bureti CDF"
+        message = self._generate_sms_message(student, custom_message)
         
         results = []
         success_count = 0
@@ -171,9 +215,13 @@ class StudentViewSet(viewsets.ModelViewSet):
             if failure_count == 0:
                 student.sms_status = 'sent'
             else:
-                student.sms_status = 'partial'  # You might want to add this status
+                student.sms_status = 'partial'
         else:
             student.sms_status = 'failed'
+        
+        # If at least one SMS was sent successfully, mark as disbursed
+        if success_count > 0 and student.status == 'approved':
+            student.status = 'disbursed'
         
         student.sms_sent_at = timezone.now()
         student.sms_sent_by = request.user
@@ -185,11 +233,16 @@ class StudentViewSet(viewsets.ModelViewSet):
                 "success": True,
                 "message": f"SMS sent to {success_count} phone(s). {failure_count} failed.",
                 "student_id": student.id,
+                "student_name": student.name,
                 "total_phones": len(unique_phones),
                 "success_count": success_count,
                 "failure_count": failure_count,
+                "sms_message": message,
+                "sponsorship_source": student.sponsorship_source,
+                "total_amount": float(student.total_allocation),
                 "results": results,
-                "sms_status": student.sms_status
+                "sms_status": student.sms_status,
+                "student_status": student.status
             }
             
             if failure_count > 0:
@@ -201,6 +254,7 @@ class StudentViewSet(viewsets.ModelViewSet):
                 "success": False,
                 "error": "Failed to send SMS to any phone number",
                 "student_id": student.id,
+                "student_name": student.name,
                 "results": results,
                 "sms_status": student.sms_status
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -225,20 +279,30 @@ class StudentViewSet(viewsets.ModelViewSet):
             # Get approved students
             students = self.get_queryset().filter(
                 id__in=student_ids,
-                status='approved'
+                status__in=['approved', 'disbursed']
             )
             
             if not students.exists():
                 return Response({
-                    "success": True,
+                    "success": False,
                     "message": "No approved students found with the provided IDs."
-                })
+                }, status=status.HTTP_400_BAD_REQUEST)
             
             overall_success = 0
             overall_failure = 0
             student_results = []
             
+            # Group students by sponsorship source for summary
+            sponsorship_summary = {
+                'cdf': {'total': 0, 'success': 0, 'failed': 0},
+                'mp': {'total': 0, 'success': 0, 'failed': 0},
+                'other': {'total': 0, 'success': 0, 'failed': 0}
+            }
+            
             for student in students:
+                # Update sponsorship summary counts
+                sponsorship_summary[student.sponsorship_source]['total'] += 1
+                
                 student_phones_sent = 0
                 student_phones_failed = 0
                 phone_results = []
@@ -267,14 +331,19 @@ class StudentViewSet(viewsets.ModelViewSet):
                     student_results.append({
                         'student_id': student.id,
                         'name': student.name,
+                        'registration_no': student.registration_no,
+                        'sponsorship_source': student.sponsorship_source,
                         'status': 'failed',
-                        'error': 'No phone numbers available'
+                        'error': 'No phone numbers available',
+                        'phones_sent': 0,
+                        'phones_failed': 0
                     })
+                    sponsorship_summary[student.sponsorship_source]['failed'] += 1
                     overall_failure += 1
                     continue
                 
-                # Create message for this student
-                message = custom_message or f"Dear {student.name}, you have been awarded {student.amount:,} KES CDF bursary for your studies at {student.institution}. Congratulations! - Bureti CDF"
+                # Create message for this student based on sponsorship
+                message = custom_message or self._generate_sms_message(student)
                 
                 # Send SMS to each unique phone number
                 for phone_number, phone_type in unique_phones.items():
@@ -317,9 +386,16 @@ class StudentViewSet(viewsets.ModelViewSet):
                         student.sms_status = 'sent'
                     else:
                         student.sms_status = 'partial'
+                    
+                    # Mark as disbursed if SMS sent successfully
+                    if student.status == 'approved':
+                        student.status = 'disbursed'
+                    
+                    sponsorship_summary[student.sponsorship_source]['success'] += 1
                     overall_success += 1
                 else:
                     student.sms_status = 'failed'
+                    sponsorship_summary[student.sponsorship_source]['failed'] += 1
                     overall_failure += 1
                 
                 student.sms_sent_at = timezone.now()
@@ -330,18 +406,29 @@ class StudentViewSet(viewsets.ModelViewSet):
                 student_results.append({
                     'student_id': student.id,
                     'name': student.name,
+                    'registration_no': student.registration_no,
+                    'sponsorship_source': student.sponsorship_source,
+                    'sponsor_name': student.sponsor_name,
+                    'total_amount': float(student.total_allocation),
                     'status': 'sent' if student_phones_sent > 0 else 'failed',
+                    'sms_message': message,
                     'phones_sent': student_phones_sent,
                     'phones_failed': student_phones_failed,
-                    'phone_results': phone_results
+                    'phone_results': phone_results,
+                    'student_status': student.status
                 })
+            
+            # Clean up sponsorship summary (remove empty entries)
+            sponsorship_summary = {k: v for k, v in sponsorship_summary.items() if v['total'] > 0}
             
             return Response({
                 "success": True,
                 "message": f"Bulk SMS operation completed. Success: {overall_success}, Failed: {overall_failure}",
                 "total_students": len(student_ids),
+                "processed_students": students.count(),
                 "success_count": overall_success,
                 "failure_count": overall_failure,
+                "sponsorship_summary": sponsorship_summary,
                 "results": student_results
             })
             
@@ -375,7 +462,7 @@ class StudentViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def export(self, request):
         """
-        Export students data to CSV
+        Export students data to CSV including sponsorship information
         """
         students = self.filter_queryset(self.get_queryset())
         
@@ -387,7 +474,9 @@ class StudentViewSet(viewsets.ModelViewSet):
         writer.writerow([
             'ID', 'Name', 'Registration No', 'Phone', 'Guardian Phone',
             'Education Level', 'Institution', 'Course', 'Year', 'Ward',
-            'Amount', 'Status', 'SMS Status', 'Date Applied', 'Date Processed'
+            'CDF Amount', 'Sponsorship Source', 'Sponsor Name', 'Sponsorship Date',
+            'Sponsorship Amount', 'Total Allocation', 'Status', 'SMS Status',
+            'Date Applied', 'Date Processed', 'SMS Sent At'
         ])
         
         for student in students:
@@ -403,10 +492,16 @@ class StudentViewSet(viewsets.ModelViewSet):
                 student.year,
                 student.ward,
                 student.amount,
+                student.get_sponsorship_source_display(),
+                student.sponsor_name or '',
+                student.sponsorship_date.strftime('%Y-%m-%d') if student.sponsorship_date else '',
+                student.sponsorship_amount or '',
+                student.total_allocation,
                 student.get_status_display(),
                 student.get_sms_status_display(),
-                student.date_applied.strftime('%Y-%m-%d'),
-                student.date_processed.strftime('%Y-%m-%d') if student.date_processed else ''
+                student.date_applied.strftime('%Y-%m-%d %H:%M:%S'),
+                student.date_processed.strftime('%Y-%m-%d %H:%M:%S') if student.date_processed else '',
+                student.sms_sent_at.strftime('%Y-%m-%d %H:%M:%S') if student.sms_sent_at else ''
             ])
         
         return response
@@ -414,48 +509,89 @@ class StudentViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def statistics(self, request):
         """
-        Get student statistics
+        Get student statistics including sponsorship information
         """
         stats = Student.get_statistics()
         
-        # Add ward distribution
-        wards = {}
-        for ward_code, ward_name in Student.WARD_CHOICES:
-            count = Student.objects.filter(ward=ward_code).count()
-            if count > 0:
-                wards[ward_name] = count
-        
-        # Add SMS statistics
-        sms_stats = {
-            'sent': Student.objects.filter(sms_status='sent').count(),
-            'failed': Student.objects.filter(sms_status='failed').count(),
-            'not_sent': Student.objects.filter(sms_status='not_sent').count(),
-            'partial': Student.objects.filter(sms_status='partial').count(),
+        # Add sponsorship breakdown
+        sponsorship_breakdown = {
+            'cdf': {
+                'count': Student.objects.filter(sponsorship_source='cdf').count(),
+                'total_amount': Student.objects.filter(sponsorship_source='cdf').aggregate(
+                    total=models.Sum('amount')
+                )['total'] or 0,
+                'total_sponsorship': 0,
+            },
+            'mp': {
+                'count': Student.objects.filter(sponsorship_source='mp').count(),
+                'total_amount': Student.objects.filter(sponsorship_source='mp').aggregate(
+                    total=models.Sum('amount')
+                )['total'] or 0,
+                'total_sponsorship': Student.objects.filter(sponsorship_source='mp').aggregate(
+                    total=models.Sum('sponsorship_amount')
+                )['total'] or 0,
+            },
+            'other': {
+                'count': Student.objects.filter(sponsorship_source='other').count(),
+                'total_amount': Student.objects.filter(sponsorship_source='other').aggregate(
+                    total=models.Sum('amount')
+                )['total'] or 0,
+                'total_sponsorship': Student.objects.filter(sponsorship_source='other').aggregate(
+                    total=models.Sum('sponsorship_amount')
+                )['total'] or 0,
+            }
         }
         
-        # Add education level distribution
-        education_stats = {}
-        for level_code, level_name in Student.EDUCATION_LEVEL_CHOICES:
-            count = Student.objects.filter(education_level=level_code).count()
-            education_stats[level_name] = count
+        # Calculate totals
+        total_cdf_amount = sponsorship_breakdown['cdf']['total_amount'] + \
+                          sponsorship_breakdown['mp']['total_amount'] + \
+                          sponsorship_breakdown['other']['total_amount']
         
-        # Add phone statistics
-        phone_stats = {
-            'has_student_phone': Student.objects.filter(phone__isnull=False).exclude(phone='').count(),
-            'has_guardian_phone': Student.objects.filter(guardian_phone__isnull=False).exclude(guardian_phone='').count(),
-            'has_both_phones': Student.objects.filter(
-                phone__isnull=False, 
-                guardian_phone__isnull=False
-            ).exclude(phone='', guardian_phone='').count(),
-            'has_no_phones': Student.objects.filter(
-                phone__isnull=True, 
-                guardian_phone__isnull=True
-            ).count() + Student.objects.filter(phone='', guardian_phone='').count(),
+        total_sponsorship_amount = sponsorship_breakdown['mp']['total_sponsorship'] + \
+                                  sponsorship_breakdown['other']['total_sponsorship']
+        
+        total_allocation = total_cdf_amount + total_sponsorship_amount
+        
+        # Add sponsorship statistics to response
+        stats['sponsorship_breakdown'] = sponsorship_breakdown
+        stats['total_cdf_amount'] = total_cdf_amount
+        stats['total_sponsorship_amount'] = total_sponsorship_amount
+        stats['total_allocation'] = total_allocation
+        
+        # Add MP sponsor names summary
+        mp_sponsors = Student.objects.filter(
+            sponsorship_source='mp',
+            sponsor_name__isnull=False
+        ).exclude(sponsor_name='').values('sponsor_name').annotate(
+            count=models.Count('id'),
+            total_amount=models.Sum('amount'),
+            total_sponsorship=models.Sum('sponsorship_amount')
+        )
+        
+        stats['mp_sponsors'] = list(mp_sponsors)
+        
+        # Add SMS statistics by sponsorship source
+        sms_by_sponsorship = {
+            'cdf': {
+                'sent': Student.objects.filter(sponsorship_source='cdf', sms_status='sent').count(),
+                'failed': Student.objects.filter(sponsorship_source='cdf', sms_status='failed').count(),
+                'not_sent': Student.objects.filter(sponsorship_source='cdf', sms_status='not_sent').count(),
+                'partial': Student.objects.filter(sponsorship_source='cdf', sms_status='partial').count(),
+            },
+            'mp': {
+                'sent': Student.objects.filter(sponsorship_source='mp', sms_status='sent').count(),
+                'failed': Student.objects.filter(sponsorship_source='mp', sms_status='failed').count(),
+                'not_sent': Student.objects.filter(sponsorship_source='mp', sms_status='not_sent').count(),
+                'partial': Student.objects.filter(sponsorship_source='mp', sms_status='partial').count(),
+            },
+            'other': {
+                'sent': Student.objects.filter(sponsorship_source='other', sms_status='sent').count(),
+                'failed': Student.objects.filter(sponsorship_source='other', sms_status='failed').count(),
+                'not_sent': Student.objects.filter(sponsorship_source='other', sms_status='not_sent').count(),
+                'partial': Student.objects.filter(sponsorship_source='other', sms_status='partial').count(),
+            }
         }
         
-        stats['wards'] = wards
-        stats['sms_statistics'] = sms_stats
-        stats['education_statistics'] = education_stats
-        stats['phone_statistics'] = phone_stats
+        stats['sms_by_sponsorship'] = sms_by_sponsorship
         
         return Response(stats)

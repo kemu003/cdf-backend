@@ -11,7 +11,7 @@ urlpatterns = [
     # User authentication and management endpoints
     # These go under /api/ (from users.urls)
     path('api/', include('users.urls')),
-    
+    path('api/reports/', include('reports.urls')),
     # Student management endpoints
     # These also go under /api/ (from students.urls)
     path('api/', include('students.urls')),
