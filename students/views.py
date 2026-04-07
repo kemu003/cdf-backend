@@ -83,21 +83,75 @@ class StudentViewSet(viewsets.ModelViewSet):
         """
         Approve a student allocation
         """
-        student = self.get_object()
+        from students.services import approve_student, InsufficientFundsError
         
-        if student.status == 'approved':
+        try:
+            student, success, message = approve_student(pk, request.user)
+            if not success:
+                return Response({"detail": message}, status=status.HTTP_400_BAD_REQUEST)
+                
+            serializer = self.get_serializer(student)
+            return Response(serializer.data)
+        except InsufficientFundsError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['post'])
+    def bulk_approve(self, request):
+        """
+        Approve multiple students at once.
+        Expects { "student_ids": [1, 2, 3] }
+        """
+        from students.services import approve_student, InsufficientFundsError
+        
+        student_ids = request.data.get('student_ids', [])
+        if not student_ids:
             return Response(
-                {"detail": "Student is already approved."},
+                {"detail": "No student IDs provided."},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        student.status = 'approved'
-        student.date_processed = timezone.now()
-        student.updated_by = request.user
-        student.save()
+        approved_count = 0
+        skipped_count = 0
+        errors = []
         
-        serializer = self.get_serializer(student)
-        return Response(serializer.data)
+        for student_id in student_ids:
+            try:
+                # The service internally locks the student and ward, checks status, and approves.
+                _, success, message = approve_student(student_id, request.user)
+                if success:
+                    approved_count += 1
+                else:
+                    skipped_count += 1
+                    # Can omit the 'already approved' from errors list unless strict
+            except InsufficientFundsError as e:
+                skipped_count += 1
+                errors.append(f"Student ID {student_id}: {str(e)}")
+            except Exception as e:
+                skipped_count += 1
+                errors.append(f"Student ID {student_id}: {str(e)}")
+        
+        result_msg = f"Approved {approved_count} student(s). {skipped_count} skipped."
+        if errors:
+            result_msg += f". Errors encountered: {'; '.join(errors[:3])}" 
+            if len(errors) > 3:
+                result_msg += " (showing 3 errors only)"
+                
+        # If no approvals succeeded but we had errors, return a 400
+        if approved_count == 0 and errors:
+            return Response({
+                "success": False,
+                "message": result_msg,
+                "errors": errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            "success": True,
+            "message": result_msg,
+            "approved_count": approved_count,
+            "skipped_count": skipped_count,
+        })
     
     @action(detail=True, methods=['put'])
     def reject(self, request, pk=None):

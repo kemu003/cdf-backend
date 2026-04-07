@@ -15,6 +15,7 @@ urlpatterns = [
     # Student management endpoints
     # These also go under /api/ (from students.urls)
     path('api/', include('students.urls')),
+    path('api/bursaries/', include('bursaries.urls')),
 ]
 
 # Serve media files in development

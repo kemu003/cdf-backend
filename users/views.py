@@ -223,22 +223,35 @@ def get_current_user(request):
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     """
-    Custom JWT token obtain view that accepts email
+    Custom JWT token obtain view that accepts BOTH email and username.
+    Ensures that whatever key the frontend uses ('email' or 'username'), 
+    the backend correctly maps it to the USERNAME_FIELD ('email').
     """
     def post(self, request, *args, **kwargs):
-        # Get the identifier (could be email or username)
-        identifier = request.data.get('username') or request.data.get('email')
+        # 1. Extract identifier from any possible key
+        identifier = (
+            request.data.get('email') or 
+            request.data.get('username') or 
+            request.data.get('identifier')
+        )
         
         if identifier:
-            # Check if it's an email
-            if '@' in identifier:
+            # 2. If it's NOT an email (no '@'), try to find the user by username
+            if '@' not in identifier:
                 try:
-                    # Find user by email
-                    user = User.objects.get(email=identifier)
-                    # Replace with username for authentication
-                    request.data['username'] = user.username
+                    user = User.objects.get(username=identifier)
+                    # Use their actual email for authentication since USERNAME_FIELD is 'email'
+                    request.data['email'] = user.email
+                    request.data['username'] = user.email # Also set 'username' just in case serializer uses it
                 except User.DoesNotExist:
-                    pass
+                    # If user not found by username, it might still be an email without '@' 
+                    # (unlikely but possible) or a wrong username.
+                    # We ensure 'email' key exists to avoid 400 'This field is required'
+                    request.data['email'] = identifier
+            else:
+                # 3. It's an email, ensure it's in both 'email' and 'username' keys
+                request.data['email'] = identifier
+                request.data['username'] = identifier
         
         return super().post(request, *args, **kwargs)
 

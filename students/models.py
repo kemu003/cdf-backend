@@ -52,6 +52,7 @@ class Student(models.Model):
     
     # Personal Information
     name = models.CharField(max_length=200)
+    national_id = models.CharField(max_length=20, unique=True, null=True, blank=True)
     registration_no = models.CharField(
         max_length=50,
         unique=True,
@@ -63,11 +64,12 @@ class Student(models.Model):
     # Education Information
     education_level = models.CharField(max_length=20, choices=EDUCATION_LEVEL_CHOICES)
     institution = models.CharField(max_length=200)
+    school_name = models.CharField(max_length=200, null=True, blank=True)
     course = models.CharField(max_length=200, blank=True)
     year = models.CharField(max_length=20, choices=YEAR_CHOICES)
     
     # Allocation Information
-    ward = models.CharField(max_length=50, choices=WARD_CHOICES)
+    ward = models.ForeignKey('bursaries.Ward', on_delete=models.PROTECT, related_name='students')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     
     # Sponsorship Information - NEW FIELDS

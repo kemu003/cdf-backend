@@ -16,19 +16,20 @@ class StudentSerializer(serializers.ModelSerializer):
     is_cdf_sponsored = serializers.BooleanField(read_only=True)
     is_other_sponsored = serializers.BooleanField(read_only=True)
     total_allocation = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    ward_name = serializers.CharField(source='ward.name', read_only=True)
     
     class Meta:
         model = Student
         fields = [
-            'id', 'name', 'registration_no', 'phone', 'guardian_phone',
-            'education_level', 'institution', 'course', 'year', 'ward',
+            'id', 'name', 'registration_no', 'national_id', 'phone', 'guardian_phone',
+            'education_level', 'institution', 'school_name', 'course', 'year', 'ward',
             'amount', 'status', 'sms_status', 'date_applied', 'date_processed',
             'created_by', 'updated_by', 'created_at', 'updated_at',
             # Sponsorship fields
             'sponsorship_source', 'sponsorship_source_display',
             'sponsor_name', 'sponsorship_date', 'sponsorship_amount',
             'sponsor_details', 'is_mp_sponsored', 'is_cdf_sponsored',
-            'is_other_sponsored', 'total_allocation'
+            'is_other_sponsored', 'total_allocation', 'ward_name'
         ]
         read_only_fields = [
             'id', 'created_at', 'updated_at', 
