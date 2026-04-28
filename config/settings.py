@@ -25,15 +25,14 @@ SECRET_KEY = config(
 
 DEBUG = config('DEBUG', default=False, cast=bool)  # Changed to False for production
 
-# Update ALLOWED_HOSTS for cPanel
+# Update ALLOWED_HOSTS for production
 ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
-    'Chepalungu-backend-63dv.onrender.com',
+    'cdf-backend.onrender.com',
     '.onrender.com',
-    '.yourdomain.com',  # Replace with your actual domain
-    '.rapstari.com',  # Replace with your cPanel domain
-    '138.201.203.59',  # Your cPanel server IP if needed
+    'cdf-frontend.onrender.com',
+    '.yourdomain.com',  # Placeholder for other domains
 ]
 
 
@@ -226,20 +225,22 @@ BLESSED_TEXTS_SENDER_ID = config('BLESSED_TEXTS_SENDER_ID', default='XpressKard'
 # CORS & CSRF (Updated for production)
 # =====================================================
 
-CORS_ALLOW_ALL_ORIGINS = DEBUG  # Only allow all in DEBUG mode
+CORS_ALLOW_ALL_ORIGINS = False # Disable for production security
 CORS_ALLOW_CREDENTIALS = True
 
-CORS_ALLOWED_ORIGINS = config(
-    'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:5173,http://127.0.0.1:5173',
-    cast=Csv()
-)
+# Allowed origins for CORS
+CORS_ALLOWED_ORIGINS = [
+    "https://cdf-frontend.onrender.com",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
 
-CSRF_TRUSTED_ORIGINS = config(
-    'CSRF_TRUSTED_ORIGINS',
-    default='http://localhost:5173,http://127.0.0.1:5173',
-    cast=Csv()
-)
+# Trusted origins for CSRF
+CSRF_TRUSTED_ORIGINS = [
+    "https://cdf-frontend.onrender.com",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
 
 
 # =====================================================
