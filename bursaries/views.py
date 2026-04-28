@@ -18,7 +18,16 @@ class ConstituencyBudgetViewSet(viewsets.ModelViewSet):
     def overview(self, request):
         budget = ConstituencyBudget.objects.filter(financial_year=2026).first()
         if not budget:
-            return Response({"error": "Budget for 2026 not found"}, status=status.HTTP_404_NOT_FOUND)
+            # Create a default budget if it doesn't exist
+            budget = ConstituencyBudget.objects.create(
+                financial_year=2026,
+                total_budget=10000000.00, # 10M default
+                description="Default budget for 2026"
+            )
+            # Initialize default wards if they don't exist
+            default_wards = ['Nyangores', 'Sigor', 'Chebunyo', 'Siongiroi', 'kongasis']
+            for ward_name in default_wards:
+                Ward.objects.get_or_create(name=ward_name, defaults={'total_allocated': 2000000.00})
 
         # Auto-fix: create missing Allocation records for students
         # that were added before the signal existed.
