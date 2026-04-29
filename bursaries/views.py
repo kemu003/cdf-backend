@@ -10,6 +10,14 @@ class WardViewSet(viewsets.ModelViewSet):
     queryset = Ward.objects.annotate(student_count=Count('students'))
     serializer_class = WardSerializer
 
+    def list(self, request, *args, **kwargs):
+        # Ensure default wards exist
+        default_wards = ['Nyangores', 'Sigor', 'Chebunyo', 'Siongiroi', 'kongasis']
+        for ward_name in default_wards:
+            Ward.objects.get_or_create(name=ward_name, defaults={'total_allocated': 2000000.00})
+        
+        return super().list(request, *args, **kwargs)
+
 class ConstituencyBudgetViewSet(viewsets.ModelViewSet):
     queryset = ConstituencyBudget.objects.all()
     serializer_class = ConstituencyBudgetSerializer
@@ -37,15 +45,18 @@ class ConstituencyBudgetViewSet(viewsets.ModelViewSet):
             amount__gt=0
         ).exclude(id__in=existing_allocation_student_ids)
         for student in students_missing_alloc:
-            # Create allocation WITHOUT triggering signal deduction
-            # by directly inserting (the remaining_balance will be
-            # computed dynamically below anyway)
-            Allocation.objects.create(
-                student=student,
-                ward=student.ward,
-                amount=student.amount,
-                financial_year=2026,
-            )
+            if student.ward_id:
+                # Create allocation WITHOUT triggering signal deduction
+                # by directly inserting (the remaining_balance will be
+                # computed dynamically below anyway)
+                Allocation.objects.get_or_create(
+                    student=student,
+                    ward_id=student.ward_id,
+                    defaults={
+                        'amount': student.amount,
+                        'financial_year': 2026,
+                    }
+                )
 
         # Compute ward data with dynamic remaining_balance using Subqueries
         # This avoids SQL Cartesian product errors when combining multiple annotations
