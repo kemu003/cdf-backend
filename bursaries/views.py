@@ -30,7 +30,6 @@ class ConstituencyBudgetViewSet(viewsets.ModelViewSet):
             budget = ConstituencyBudget.objects.create(
                 financial_year=2026,
                 total_budget=10000000.00, # 10M default
-                description="Default budget for 2026"
             )
             # Initialize default wards if they don't exist
             default_wards = ['Nyangores', 'Sigor', 'Chebunyo', 'Siongiroi', 'kongasis']
@@ -67,7 +66,7 @@ class ConstituencyBudgetViewSet(viewsets.ModelViewSet):
         
         wards = Ward.objects.annotate(
             student_count=Coalesce(Subquery(student_count_sq), Value(0)),
-            spent=Coalesce(Subquery(spent_sq, output_field=DecimalField()), Value(0), output_field=DecimalField())
+            spent=Coalesce(Subquery(spent_sq, output_field=DecimalField()), Value(0, output_field=DecimalField()), output_field=DecimalField())
         )
 
         # Build ward data manually so remaining_balance is dynamic
@@ -88,7 +87,7 @@ class ConstituencyBudgetViewSet(viewsets.ModelViewSet):
         allocated_to_students = Allocation.objects.filter(
             financial_year=2026
         ).aggregate(
-            total=Coalesce(Sum('amount'), Value(0), output_field=DecimalField())
+            total=Coalesce(Sum('amount'), Value(0, output_field=DecimalField()), output_field=DecimalField())
         )['total']
 
         remaining_budget = total_budget - allocated_to_students
