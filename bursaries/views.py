@@ -3,6 +3,8 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.db.models import Count, Sum, F, Value, DecimalField
 from django.db.models.functions import Coalesce
+from django.db import OperationalError, ProgrammingError
+from django.core.management import call_command
 from .models import Ward, ConstituencyBudget, Allocation
 from .serializers import WardSerializer, ConstituencyBudgetSerializer, AllocationSerializer
 
@@ -22,8 +24,37 @@ class ConstituencyBudgetViewSet(viewsets.ModelViewSet):
     queryset = ConstituencyBudget.objects.all()
     serializer_class = ConstituencyBudgetSerializer
 
+    def _ensure_tables_ready(self):
+        """
+        Recover from first-boot deployments where migrations were not applied yet.
+        """
+        try:
+            ConstituencyBudget.objects.exists()
+        except (OperationalError, ProgrammingError) as exc:
+            error_text = str(exc).lower()
+            missing_table_markers = [
+                'no such table',
+                'relation',
+                'does not exist',
+            ]
+            if any(marker in error_text for marker in missing_table_markers):
+                call_command('migrate', interactive=False, verbosity=0)
+            else:
+                raise
+
     @action(detail=False, methods=['get'])
     def overview(self, request):
+        try:
+            self._ensure_tables_ready()
+        except Exception as exc:
+            return Response(
+                {
+                    "detail": "Database is not ready. Please retry in a few seconds.",
+                    "error": str(exc),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
         budget = ConstituencyBudget.objects.filter(financial_year=2026).first()
         if not budget:
             # Create a default budget if it doesn't exist
